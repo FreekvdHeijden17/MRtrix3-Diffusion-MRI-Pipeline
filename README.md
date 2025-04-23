@@ -2,7 +2,7 @@
 
 This repository contains scripts and documentation for preprocessing diffusion MRI data using MRtrix3.
 
-## Overview
+# Overview
 
 This pipeline processes diffusion-weighted imaging (DWI) data using MRtrix3 tools, including:
 - File format conversion
@@ -10,13 +10,13 @@ This pipeline processes diffusion-weighted imaging (DWI) data using MRtrix3 tool
 - Gibbs ringing correction
 - Preprocessing with FSL's eddy tool
 
-## Prerequisites
+# Prerequisites
 
 - Docker
 - MRtrix3 Docker image
 - Raw diffusion MRI data (NIfTI format with corresponding bvec/bval files)
 
-## Preprocessing Steps
+# Preprocessing Steps
 
 ### 1. Start Docker Container
 
