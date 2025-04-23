@@ -25,5 +25,19 @@ mv ../anat/5tt_nocoreg.mif .
 mrconvert mean_b0.mif mean_b0.nii.gz
 mrconvert 5tt_nocoreg.mif 5tt_nocoreg.nii.gz
 
+##Need fsl
+
 # Extract the first volume (index 0) from the `5tt_nocoreg.nii.gz` file and save it as `5tt_vol0.nii.gz`.
 fslroi 5tt_nocoreg.nii.gz 5tt_vol0.nii.gz 0 1
+
+#We then use the flirt command to coregister the two datasets:
+flirt -in mean_b0.nii.gz -ref 5tt_vol0.nii.gz -interp nearestneighbour -dof 6 -omat diff2struct_fsl.mat
+
+# Convert the transformation matrix from FSL format into MRtrix-readable format using `transformconvert`.
+transformconvert diff2struct_fsl.mat mean_b0.nii.gz 5tt_nocoreg.nii.gz flirt_import diff2struct_mrtrix.txt
+
+mrtransform 5tt_nocoreg.mif -linear diff2struct_mrtrix.txt -inverse 5tt_coreg.mif
+
+5tt2gmwmi 5tt_coreg.mif gmwmSeed_coreg.mif
+
+tckgen -act 5tt_coreg.mif -backtrack -seed_gmwmi gmwmSeed_coreg.mif -nthreads 8 -maxlength 250 -cutoff 0.06 -select 10000000 wmfod_norm.mif tracks_10M.tck
