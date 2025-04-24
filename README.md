@@ -5,7 +5,7 @@ This repository contains scripts and documentation for processing diffusion MRI 
 - [Overview](#overview)
   - [Preprocessing](#preprocessing)
   - [Analysis](#analysis)
-- [Prerequisites](#prerequisites)
+  - [Prerequisites](#prerequisites)
 - [Preprocessing Steps](#preprocessing-steps)
   1. [Start Docker Container](#1-start-docker-container)
   2. [Navigate to Subject Directory](#2-navigate-to-subject-directory)
