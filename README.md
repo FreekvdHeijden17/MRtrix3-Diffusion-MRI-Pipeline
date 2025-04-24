@@ -1,22 +1,33 @@
-# MRtrix3 Preprocessing Pipeline
+# MRtrix3 Diffusion MRI Pipeline
 
-This repository contains scripts and documentation for preprocessing diffusion MRI data using MRtrix3.
+This repository contains scripts and documentation for processing diffusion MRI data using MRtrix3, including preprocessing, fiber orientation distribution analysis, and tractography.
 
-# Overview
+## Overview
 
-This pipeline processes diffusion-weighted imaging (DWI) data using MRtrix3 tools, including:
+This pipeline includes:
+
+### Preprocessing
 - File format conversion
 - Noise removal
 - Gibbs ringing correction
 - Preprocessing with FSL's eddy tool
 
-# Prerequisites
+### Analysis
+- Fiber Orientation Distribution (FOD) estimation
+- Multi-tissue Constrained Spherical Deconvolution
+- Anatomically-Constrained Tractography (ACT)
+- Structural connectivity analysis
+
+## Prerequisites
 
 - Docker
 - MRtrix3 Docker image
+- FSL software package
+- FreeSurfer (for cortical reconstruction)
 - Raw diffusion MRI data (NIfTI format with corresponding bvec/bval files)
+- T1-weighted anatomical images
 
-# Preprocessing Steps
+## Preprocessing Steps
 
 ### 1. Start Docker Container
 
@@ -140,15 +151,108 @@ This step corrects for:
 - Eddy current-induced distortions
 - Subject motion
 
-## Next Steps
+## Advanced Analysis Steps
 
-After preprocessing, you can continue with:
-- Creating a brain mask
-- Fitting diffusion tensor models
-- Fiber orientation distribution analysis
-- Tractography
+After preprocessing, the pipeline continues with advanced diffusion MRI analysis:
+
+### 1. Fiber Orientation Distribution (FOD) Analysis
+
+```bash
+# Estimate response functions for different tissue types using dhollander algorithm
+dwi2response dhollander Subject2_den_preproc_unbiased.mif wm.txt gm.txt csf.txt -voxels voxels.mif
+
+# Estimate FODs using multi-shell, multi-tissue constrained spherical deconvolution
+dwi2fod msmt_csd Subject2_den_preproc_unbiased.mif -mask mask.mif \
+    wm.txt wmfod.mif gm.txt gmfod.mif csf.txt csffod.mif
+
+# Create a 3-tissue volume fraction image
+mrconvert -coord 3 0 wmfod.mif - | mrcat csffod.mif gmfod.mif - vf.mif
+
+# Perform multi-tissue normalization
+mtnormalise wmfod.mif wmfod_norm.mif gmfod.mif gmfod_norm.mif \
+    csffod.mif csffod_norm.mif -mask mask.mif
+```
+
+These commands:
+- Estimate response functions for white matter, gray matter, and CSF
+- Perform multi-shell, multi-tissue constrained spherical deconvolution to get FODs
+- Create volume fraction maps for visualization
+- Normalize FOD intensities across subjects for group analysis
+
+### 2. Anatomical Image Processing & Registration
+
+```bash
+# Convert T1w image to MRtrix format
+mrconvert sub-CC110045_T1w.nii t1.mif
+
+# Generate 5-tissue-type segmentation for anatomically constrained tractography
+5ttgen fsl T1.mif 5tt_nocoreg.mif
+
+# Extract and average b=0 volumes from DWI data
+dwiextract Subject2_den_preproc_unbiased.mif - -bzero | mrmath - mean mean_b0.mif -axis 3
+
+# Convert files to NIfTI format for FSL registration
+mrconvert mean_b0.mif mean_b0.nii.gz
+mrconvert 5tt_nocoreg.mif 5tt_nocoreg.nii.gz
+
+# Extract first volume from 5tt image for registration
+fslroi 5tt_nocoreg.nii.gz 5tt_vol0.nii.gz 0 1
+
+# Register diffusion to structural image
+flirt -in mean_b0.nii.gz -ref 5tt_vol0.nii.gz -interp nearestneighbour -dof 6 -omat diff2struct_fsl.mat
+
+# Convert transformation matrix from FSL to MRtrix format
+transformconvert diff2struct_fsl.mat mean_b0.nii.gz 5tt_nocoreg.nii.gz flirt_import diff2struct_mrtrix.txt
+
+# Apply transformation to 5tt image to align with diffusion space
+mrtransform 5tt_nocoreg.mif -linear diff2struct_mrtrix.txt -inverse 5tt_coreg.mif
+
+# Extract gray matter-white matter interface for seeding tractography
+5tt2gmwmi 5tt_coreg.mif gmwmSeed_coreg.mif
+```
+
+These steps:
+- Process the T1-weighted anatomical image
+- Register the diffusion and structural data
+- Extract tissue interfaces for tractography seeding
+
+### 3. Tractography Generation
+
+```bash
+# Generate 10 million streamlines using anatomically constrained tractography
+tckgen -act 5tt_coreg.mif -backtrack -seed_gmwmi gmwmSeed_coreg.mif \
+    -nthreads 8 -maxlength 250 -cutoff 0.06 -select 10000000 \
+    wmfod_norm.mif tracks_10M.tck
+
+# Apply SIFT2 to obtain streamline weights for more biologically accurate connectivity analysis
+tcksift2 -act 5tt_coreg.mif -out_mu sift_mu.txt -out_coeffs sift_coeffs.txt \
+    -nthreads 8 tracks_10M.tck wmfod_norm.mif sift_1M.txt
+```
+
+This generates:
+- 10 million anatomically-constrained tractography streamlines
+- SIFT2 weights to adjust for reconstruction biases
+
+### 4. FreeSurfer Cortical Reconstruction
+
+```bash
+# Set FreeSurfer subjects directory
+SUBJECTS_DIR=$(pwd)
+
+# Run FreeSurfer's cortical reconstruction pipeline
+recon-all -i sub-CC110045_T1w.nii -s sub-CON02_recon -all
+```
+
+FreeSurfer's `recon-all` command:
+- Performs cortical surface reconstruction
+- Creates cortical parcellations
+- Enables later connectome generation with anatomical ROIs
 
 ## References
 
 - [MRtrix3 Documentation](https://mrtrix.readthedocs.io/)
-- [FSL eddy Documentation](https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/eddy)
+- [FSL Documentation](https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/)
+- [FreeSurfer Documentation](https://surfer.nmr.mgh.harvard.edu/fswiki)
+- [Multi-Tissue CSD Paper](https://doi.org/10.1016/j.neuroimage.2014.07.061)
+- [SIFT2 Paper](https://doi.org/10.1016/j.neuroimage.2015.05.039)
+- [Anatomically-Constrained Tractography Paper](https://doi.org/10.1016/j.neuroimage.2012.06.005)
