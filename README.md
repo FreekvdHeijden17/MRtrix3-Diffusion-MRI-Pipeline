@@ -1,6 +1,29 @@
 # MRtrix3 Diffusion MRI Pipeline
-
 This repository contains scripts and documentation for processing diffusion MRI data using MRtrix3, including preprocessing, fiber orientation distribution analysis, and tractography.
+
+## Table of Contents
+- [Overview](#overview)
+  - [Preprocessing](#preprocessing)
+  - [Analysis](#analysis)
+- [Prerequisites](#prerequisites)
+- [Preprocessing Steps](#preprocessing-steps)
+  1. [Start Docker Container](#1-start-docker-container)
+  2. [Navigate to Subject Directory](#2-navigate-to-subject-directory)
+  3. [List Files](#3-list-files)
+  4. [Convert DWI Data Format](#4-convert-dwi-data-format)
+  5. [Rename Files for Consistency](#5-rename-files-for-consistency)
+  6. [Examine the DWI Data](#6-examine-the-dwi-data)
+  7. [Check Image Dimensions](#7-check-image-dimensions)
+  8. [Verify Gradient Table Size](#8-verify-gradient-table-size)
+  9. [Denoise the DWI Data](#9-denoise-the-dwi-data)
+  10. [Remove Gibbs Ringing Artifacts](#10-remove-gibbs-ringing-artifacts)
+  11. [Preprocess DWI with FSL Integration](#11-preprocess-dwi-with-fsl-integration)
+- [Advanced Analysis Steps](#advanced-analysis-steps)
+  1. [Fiber Orientation Distribution (FOD) Analysis](#1-fiber-orientation-distribution-fod-analysis)
+  2. [Anatomical Image Processing & Registration](#2-anatomical-image-processing--registration)
+  3. [Tractography Generation](#3-tractography-generation)
+  4. [FreeSurfer Cortical Reconstruction](#4-freesurfer-cortical-reconstruction)
+- [References](#references)
 
 ## Overview
 
