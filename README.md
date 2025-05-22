@@ -36,6 +36,8 @@ This pipeline includes:
 - Noise removal
 - Gibbs ringing correction
 - Preprocessing with FSL's eddy tool
+- Bias field correction
+- Brain mask generation
 
 ### Analysis
 - Fiber Orientation Distribution (FOD) estimation
