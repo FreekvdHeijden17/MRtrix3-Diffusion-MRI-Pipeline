@@ -18,6 +18,8 @@ This repository contains scripts and documentation for processing diffusion MRI 
   9. [Denoise the DWI Data](#9-denoise-the-dwi-data)
   10. [Remove Gibbs Ringing Artifacts](#10-remove-gibbs-ringing-artifacts)
   11. [Preprocess DWI with FSL Integration](#11-preprocess-dwi-with-fsl-integration)
+  12. [Bias Field Correction](#12-bias-field-correction)
+  13. [Generate Brain Mask](#13-generate-brain-mask)
 - [Advanced Analysis Steps](#advanced-analysis-steps)
   1. [Fiber Orientation Distribution (FOD) Analysis](#1-fiber-orientation-distribution-fod-analysis)
   2. [Anatomical Image Processing & Registration](#2-anatomical-image-processing--registration)
@@ -173,6 +175,38 @@ This step corrects for:
 - Susceptibility-induced distortions
 - Eddy current-induced distortions
 - Subject motion
+
+### 12. Bias Field Correction
+
+```bash
+dwibiascorrect ants Subject1_den_preproc.mif Subject1_den_preproc_unbiased.mif -bias bias.mif
+```
+
+This command corrects for intensity inhomogeneities (bias fields) in the DWI data using ANTs N4 bias correction:
+- Input: `Subject1_den_preproc.mif` (motion and eddy current corrected data)
+- Output: `Subject1_den_preproc_unbiased.mif` (bias field corrected data)
+- The `-bias` option saves the estimated bias field to `bias.mif` for quality control
+
+Bias field correction is essential for:
+- Accurate intensity-based analysis
+- Proper tissue segmentation
+- Consistent quantitative measurements across the brain
+
+### 13. Generate Brain Mask
+
+```bash
+dwi2mask Subject1_den_preproc_unbiased.mif mask.mif
+```
+
+Creates a binary brain mask to restrict analysis to brain tissue only:
+- Input: `Subject1_den_preproc_unbiased.mif` (bias corrected data)
+- Output: `mask.mif` (binary brain mask)
+
+The brain mask:
+- Excludes non-brain tissue (skull, scalp, air)
+- Improves computational efficiency by focusing analysis on brain voxels
+- Reduces noise from background regions
+- Is essential for subsequent analysis steps including FOD estimation
 
 ## Advanced Analysis Steps
 
