@@ -56,6 +56,8 @@ This pipeline includes:
 
 ## Preprocessing Steps
 
+## If you use docker (otherwise skip to step 2):
+
 ### 1. Start Docker Container
 
 ```bash
