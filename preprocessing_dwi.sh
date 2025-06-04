@@ -1,6 +1,6 @@
 #!/bin/bash
 
-## If you use docker (underwise skip to line 10):
+## If you use docker (otherwise skip to line 10):
 
 ## Run MRtrix3 Docker container
 docker run -it --rm -v "C:\Users\u361338\OneDrive - Tilburg University\Documenten\MRITRIX":/data mrtrix3/mrtrix3
