@@ -1,0 +1,240 @@
+#! /bin/sh
+
+# COMPLETE Tractography pipeline with dwi masking
+
+set -e  # Exit on any error
+
+export FSLDIR=$HOME/fsl
+PATH=$FSLDIR/share/fsl/bin:$HOME/mrtrix/bin:$FSLDIR/bin:$HOME/ants-2.6.2/bin:$PATH
+. $FSLDIR/etc/fslconf/fsl.sh
+
+# Number of threads to use for programs that support multi-threading
+# (set to 0 to disable multi-threading)
+case $NTHREADS in '')
+	NTHREADS=$(nproc)
+esac
+date
+echo "Running with NTHREADS=$NTHREADS"
+
+# Set defaults for different toolkits:
+export MRTRIX_NTHREADS=$NTHREADS OMP_NUM_THREADS=$NTHREADS ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$NTHREADS
+
+PARTICIPANT=$1
+case $PARTICIPANT in ''|.|..|*/*)
+	echo "Usage: $0 <sub-CC1234567>" >&2
+	exit 2
+esac
+
+WORK_DIR=$HOME=${TMPDIR:-/tmp}/tractography_dwimask/$PARTICIPANT
+OUTPUT_DIR=$HOME/data/${PARTICIPANT}_tractography_dwimask_complete
+
+#DWI_SOURCE_DIR=$HOME/researchdrive/TSB0020 Neuroimaging_aging (Projectfolder)/Camcan/mri/pipeline/release004/BIDS_20190411/dwi/$PARTICIPANT/dwi
+#ANAT_SOURCE_DIR=$HOME/researchdrive/TSB0020 Neuroimaging_aging (Projectfolder)/Camcan/mri/pipeline/release004/BIDS_20190411/anat/$PARTICIPANT/anat
+DWI_SOURCE_DIR=$HOME/source/dwi
+ANAT_SOURCE_DIR=$HOME/source/anat
+
+# Create working directory
+date
+echo "Creating working directory: $WORK_DIR"
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
+
+# Copy input data
+date
+echo "Copying input data for $PARTICIPANT..."
+cp "$DWI_SOURCE_DIR/${PARTICIPANT}_dwi.nii.gz" .
+cp "$DWI_SOURCE_DIR/${PARTICIPANT}_dwi.bval" .
+cp "$DWI_SOURCE_DIR/${PARTICIPANT}_dwi.bvec" .
+cp "$ANAT_SOURCE_DIR/${PARTICIPANT}_T1w.nii.gz" .
+
+date
+echo "Starting COMPLETE DWI MASKING tractography pipeline for $PARTICIPANT"
+echo "========================================================================="
+
+############################### STEP 1 ###############################
+#             Convert data to .mif format and denoise                #
+######################################################################
+
+date
+echo "STEP 1: Converting data to .mif format and preprocessing..."
+
+# Convert DWI data to .mif format
+mrconvert ${PARTICIPANT}_dwi.nii.gz dwi.mif
+mrconvert dwi.mif -fslgrad ${PARTICIPANT}_dwi.bvec ${PARTICIPANT}_dwi.bval dwi_header.mif
+
+# Denoise the data
+date
+echo "Denoising..."
+dwidenoise dwi_header.mif dwi_den.mif -noise noise.mif
+
+# Remove Gibbs ringing artifacts
+date
+echo "Removing Gibbs ringing..."
+mrdegibbs dwi_den.mif dwi_den_unr.mif
+
+######################################################################
+# Run the dwipreproc command (wrapper for eddy and topup)           #
+######################################################################
+
+date
+echo "Running dwifslpreproc (this may take 30-60 minutes)..."
+dwifslpreproc dwi_den_unr.mif dwi_den_preproc.mif -pe_dir AP -rpe_none -readout_time 0.0342002 -eddy_options " --slm=linear --data_is_shelled "
+
+# Extract the b0 images from the diffusion data
+date
+echo "Extracting b0 images..."
+dwiextract dwi_den_preproc.mif - -bzero |
+	mrmath - mean mean_b0_AP.mif -axis 3
+
+mrconvert mean_b0_AP.mif mean_b0_AP.nii.gz
+bet mean_b0_AP.nii.gz mean_b0_AP_bet.nii.gz -m -R -f 0.3
+mrconvert mean_b0_AP_bet_mask.nii.gz mask_for_biascorrection.mif
+
+# Bias field correction
+date
+echo "Bias field correction..."
+dwibiascorrect fsl dwi_den_preproc.mif dwi_den_preproc_unbiased.mif -mask mask_for_biascorrection.mif -bias bias.mif
+
+########################### STEP 2 ###################################
+#                          Upsample                                  #
+######################################################################
+
+date
+echo "STEP 2: Upsampling..."
+
+# Upsample the diffusion image
+mrgrid dwi_den_preproc_unbiased.mif regrid -vox 1.5 dwi_unbiased_upsampled.mif
+
+########################### STEP 3 ###################################
+#             Response functions with dwi mask                        #
+######################################################################
+
+date
+echo "STEP 3: Estimating response functions with dwi-based mask..."
+
+# Estimate response functions using dwi-based mask
+dwi2response dhollander dwi_unbiased_upsampled.mif wm.txt gm.txt csf.txt -voxels voxels.mif
+
+dwi2mask dwi_unbiased_upsampled.mif mask_up.mif
+
+# Perform constrained spherical deconvolution
+date
+echo "Performing constrained spherical deconvolution..."
+dwi2fod msmt_csd dwi_unbiased_upsampled.mif -mask mask_up.mif wm.txt wmfod_up.mif gm.txt gmfod_up.mif csf.txt csffod_up.mif
+
+# Normalize the FODs
+date
+echo "Normalizing FODs..."
+mtnormalise wmfod_up.mif wmfod_norm_up.mif gmfod_up.mif gmfod_norm_up.mif csffod_up.mif csffod_norm_up.mif -mask mask_up.mif
+
+########################### STEP 4 ###################################
+#                        Creating 5TT and coregistration             #
+######################################################################
+
+date
+echo "STEP 4: Creating 5TT..."
+
+# Convert anatomical to working formats
+mrconvert ${PARTICIPANT}_T1w.nii.gz T1.mif
+mrconvert T1.mif T1.nii.gz
+
+# Generate 5-tissue-type segmentation
+date
+echo "Generating 5-tissue-type segmentation..."
+5ttgen fsl T1.mif 5tt_nocoreg.mif
+mrconvert 5tt_nocoreg.mif 5tt_nocoreg.nii.gz
+
+# Extract mean b0 for coregistration
+dwiextract dwi_unbiased_upsampled.mif - -bzero |
+	mrmath - mean mean_b0_processed_up.mif -axis 3
+mrconvert mean_b0_processed_up.mif mean_b0_processed_up.nii.gz
+
+# STEP 2B: Coregister T1 to DWI space
+date
+echo "Coregistering T1 to DWI space..."
+fslroi 5tt_nocoreg.nii.gz 5tt_vol0.nii.gz 0 1
+flirt -in mean_b0_processed_up.nii.gz -ref 5tt_vol0.nii.gz -interp nearestneighbour -dof 6 -omat diff2struct_fsl_up.mat
+
+# Also create coregistration for other transforms
+transformconvert diff2struct_fsl_up.mat mean_b0_processed_up.nii.gz 5tt_nocoreg.nii.gz flirt_import diff2struct_mrtrix_up.txt
+mrtransform 5tt_nocoreg.mif -linear diff2struct_mrtrix_up.txt -inverse 5tt_coreg_up.mif
+
+# Create a seed region along the GM/WM boundary
+date
+echo "Creating GM/WM boundary seed region..."
+5tt2gmwmi 5tt_coreg_up.mif gmwmSeed_coreg_up.mif
+
+########################## STEP 5 ###################################
+#                 Run the streamline analysis                        #
+######################################################################
+
+date
+echo "STEP 5: Generating streamlines (this may take 1-2 hours)..."
+
+# Generate 10 million tracks
+date
+echo "Generating 10 million streamlines..."
+tckgen -act 5tt_coreg_up.mif -backtrack -seed_gmwmi gmwmSeed_coreg_up.mif -maxlength 250 -cutoff 0.06 -select 10000k wmfod_norm_up.mif tracks_10M_up.tck
+
+# SIFT2 filtering
+date
+echo "Running SIFT2 filtering..."
+tcksift2 -act 5tt_coreg_up.mif -out_mu sift_mu_up.txt -out_coeffs sift_coeffs_up.txt tracks_10M_up.tck wmfod_norm_up.mif sift_1M_up.txt
+
+########################## STEP 6 ###################################
+#                 Creating the connectome                            #
+######################################################################
+
+date
+echo "STEP 6: Creating connectomes..."
+
+# Skull strip T1 (use existing brain extraction)
+bet T1.nii.gz skullstripped_T1w.nii.gz -R -f 0.3
+
+# Register to MNI space
+date
+echo "Registering to MNI space..."
+antsRegistrationSyN.sh -d 3 -f $FSLDIR/data/standard/MNI152_T1_1mm_brain.nii.gz -m skullstripped_T1w.nii.gz -o T1_to_MNI
+
+# Transform atlases to subject space
+date
+echo "Transforming atlases to subject space..."
+antsApplyTransforms -d 3 -i $HOME/data/Gordon_Parcels.nii -r skullstripped_T1w.nii.gz -o Gordon_Parcels_T1w_space.nii.gz -n NearestNeighbor -t T1_to_MNI1InverseWarp.nii.gz -t [T1_to_MNI0GenericAffine.mat,1] -v
+antsApplyTransforms -d 3 -i $HOME/data/BN_Atlas.nii -r skullstripped_T1w.nii.gz -o BN_Atlas_T1w_space.nii.gz -n NearestNeighbor -t T1_to_MNI1InverseWarp.nii.gz -t [T1_to_MNI0GenericAffine.mat,1] -v
+antsApplyTransforms -d 3 -i $HOME/data/MNI_Glasser_HCP_v1.0_afni.nii -r skullstripped_T1w.nii.gz -o Glasser_Parcels_T1w_space.nii.gz -n NearestNeighbor -t T1_to_MNI1InverseWarp.nii.gz -t [T1_to_MNI0GenericAffine.mat,1] -v
+antsApplyTransforms -d 3 -i $HOME/data/ROIs_300inVol_MNI.nii -r skullstripped_T1w.nii.gz -o Seitzman_Parcels_T1w_space.nii.gz -n NearestNeighbor -t T1_to_MNI1InverseWarp.nii.gz -t [T1_to_MNI0GenericAffine.mat,1] -v
+
+# Transform atlases to DWI space
+date
+echo "Transforming atlases to DWI space..."
+mrtransform Gordon_Parcels_T1w_space.nii.gz -linear diff2struct_mrtrix_up.txt -inverse Gordon_Parcels_DWI_space.nii.gz
+mrtransform BN_Atlas_T1w_space.nii.gz -linear diff2struct_mrtrix_up.txt -inverse BN_Atlas_DWI_space.nii.gz
+mrtransform Glasser_Parcels_T1w_space.nii.gz -linear diff2struct_mrtrix_up.txt -inverse Glasser_Parcels_DWI_space.nii.gz
+mrtransform Seitzman_Parcels_T1w_space.nii.gz -linear diff2struct_mrtrix_up.txt -inverse Seitzman_Parcels_DWI_space.nii.gz
+
+# Upsample atlases to match upsampled DWI
+date
+echo "Upsampling atlases to match DWI resolution..."
+mrgrid Gordon_Parcels_DWI_space.nii.gz regrid -vox 1.5 Gordon_Parcels_DWI_upsampled.nii.gz -interp nearest
+mrgrid BN_Atlas_DWI_space.nii.gz regrid -vox 1.5 BN_Atlas_DWI_upsampled.nii.gz -interp nearest
+mrgrid Glasser_Parcels_DWI_space.nii.gz regrid -vox 1.5 Glasser_Parcels_DWI_upsampled.nii.gz -interp nearest
+mrgrid Seitzman_Parcels_DWI_space.nii.gz regrid -vox 1.5 Seitzman_Parcels_DWI_upsampled.nii.gz -interp nearest
+
+# Create connectomes using upsampled atlases with DWI masking
+date
+echo "Creating connectome matrices with T1-based masking..."
+tck2connectome -assignment_radial_search 4 -symmetric -zero_diagonal -scale_invnodevol -tck_weights_in sift_1M_up.txt tracks_10M_up.tck Gordon_Parcels_DWI_upsampled.nii.gz $OUTPUT_DIR/Gordon_parcels_DWImask.txt -out_assignment $OUTPUT_DIR/assignments_gordon_DWImask.csv
+tck2connectome -assignment_radial_search 4 -symmetric -zero_diagonal -scale_invnodevol -tck_weights_in sift_1M_up.txt tracks_10M_up.tck BN_Atlas_DWI_upsampled.nii.gz $OUTPUT_DIR/BN_Atlas_DWImask.txt -out_assignment $OUTPUT_DIR/assignments_BN_DWImask.csv
+tck2connectome -assignment_radial_search 4 -symmetric -zero_diagonal -scale_invnodevol -tck_weights_in sift_1M_up.txt tracks_10M_up.tck Glasser_Parcels_DWI_upsampled.nii.gz $OUTPUT_DIR/Glasser_parcels_DWImask.txt -out_assignment $OUTPUT_DIR/assignments_glasser_DWImask.csv
+tck2connectome -assignment_radial_search 4 -symmetric -zero_diagonal -scale_invnodevol -tck_weights_in sift_1M_up.txt tracks_10M_up.tck Seitzman_Parcels_DWI_upsampled.nii.gz $OUTPUT_DIR/Seitzman_parcels_DWImask.txt -out_assignment $OUTPUT_DIR/assignments_Seitzman_DWImask.csv
+
+echo "========================================================================="
+date
+echo "COMPLETE TRACTOGRAPHY PIPELINE COMPLETED!"
+echo "Results are in: $OUTPUT_DIR"
+echo ""
+echo "CONNECTOME MATRICES:"
+echo "  - Gordon: Gordon_parcels_DWImask.txt"
+echo "  - BN Atlas: BN_Atlas_DWImask.txt"
+echo "  - Glasser: Glasser_parcels_DWImask.txt"
+echo "  - Seitzman: Seitzman_parcels_DWImask.txt"
