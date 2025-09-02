@@ -25,7 +25,7 @@ case $PARTICIPANT in ''|.|..|*/*)
 	exit 2
 esac
 
-WORK_DIR=$HOME=${TMPDIR:-/tmp}/tractography_dwimask/$PARTICIPANT
+WORK_DIR=${TMPDIR:-/tmp}/tractography_dwimask/$PARTICIPANT
 OUTPUT_DIR=$HOME/data/${PARTICIPANT}_tractography_dwimask_complete
 
 #DWI_SOURCE_DIR=$HOME/researchdrive/TSB0020 Neuroimaging_aging (Projectfolder)/Camcan/mri/pipeline/release004/BIDS_20190411/dwi/$PARTICIPANT/dwi
@@ -78,7 +78,9 @@ mrdegibbs dwi_den.mif dwi_den_unr.mif
 
 date
 echo "Running dwifslpreproc (this may take 30-60 minutes)..."
-dwifslpreproc dwi_den_unr.mif dwi_den_preproc.mif -pe_dir AP -rpe_none -readout_time 0.0342002 -eddy_options " --slm=linear --data_is_shelled "
+# eddy_cpu currently does not honor environment settings so we add --nthr= explicitly.
+# https://neurostars.org/t/eddy-cpu-multithreading/29249
+dwifslpreproc dwi_den_unr.mif dwi_den_preproc.mif -pe_dir AP -rpe_none -readout_time 0.0342002 -eddy_options " --slm=linear --data_is_shelled --nthr=$NTHREADS "
 
 # Extract the b0 images from the diffusion data
 date
