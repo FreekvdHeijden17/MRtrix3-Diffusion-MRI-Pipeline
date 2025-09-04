@@ -39,6 +39,11 @@ echo "Creating working directory: $WORK_DIR"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
+# Create output directory
+date
+echo "Creating output directory: $OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
+
 # Copy input data
 date
 echo "Copying input data for $PARTICIPANT..."
